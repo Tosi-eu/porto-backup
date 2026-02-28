@@ -15,6 +15,7 @@ pg_dump \
 
 echo "[Backup] Backup created: $BACKUP_FILE"
 
+# Remove backups older than 48 hours (2880 minutes)
 find "$BACKUP_DIR" -type f -name "backup_*.sql.gz" -mmin +2880 -delete
 
 echo "[Backup] Old backups cleaned"

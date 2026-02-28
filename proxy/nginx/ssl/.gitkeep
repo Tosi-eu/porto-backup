@@ -1,0 +1,2 @@
+# Place SSL certificates here for HTTPS (e.g. fullchain.pem, privkey.pem).
+# Ensure this directory is in .gitignore for real certs; keep .gitkeep for the folder.

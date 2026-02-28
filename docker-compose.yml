@@ -1,0 +1,123 @@
+# =============================================================================
+# Abrigo - Infrastructure stack (VPS / production-style)
+# Run from repository root: docker compose -f infrastructure/docker-compose.yml up -d
+# Or from this directory:  docker compose -f docker-compose.yml up -d
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:18
+    container_name: postgres
+    restart: always
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_DB: ${DB_NAME:-estoque}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - abrigo
+    # Expose only to other containers by default; open 5432 on host only if needed
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    networks:
+      - abrigo
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: backend
+    restart: always
+    env_file:
+      - ../.env
+    environment:
+      PORT: 3000
+      NODE_ENV: ${NODE_ENV:-production}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    volumes:
+      - ../backend:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - abrigo
+    # Not exposed to host when using nginx; expose only if running without proxy
+    expose:
+      - "3000"
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost/api/v1}
+        VITE_LOGO_URL: ${VITE_LOGO_URL:-/logo.png}
+    container_name: frontend
+    restart: always
+    networks:
+      - abrigo
+    expose:
+      - "80"
+    depends_on:
+      - backend
+
+  # Reverse proxy: single entry point, SSL termination, rate limiting
+  proxy:
+    image: nginx:alpine
+    container_name: proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./proxy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./proxy/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./proxy/nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - abrigo
+
+  backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    container_name: postgres_backup
+    restart: always
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${DB_NAME:-estoque}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - backups:/backups
+    depends_on:
+      - postgres
+    networks:
+      - abrigo
+
+volumes:
+  postgres_data:
+  backups:
+
+networks:
+  abrigo:
+    driver: bridge
