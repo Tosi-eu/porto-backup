@@ -34,7 +34,7 @@ if [ -n "${BACKUP_ENCRYPTION_PASSWORD}" ]; then
   fi
 fi
 
-if [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2_ACCESS_KEY_ID}" ] && [ -n "${R2_SECRET_ACCESS_KEY}" ] && [ -n "${R2_BUCKET_NAME}" ]; then
+if [ "${NODE_ENV:-}" = "production" ] && [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2_ACCESS_KEY_ID}" ] && [ -n "${R2_SECRET_ACCESS_KEY}" ] && [ -n "${R2_BUCKET_NAME}" ]; then
   if echo "$R2_BUCKET_NAME" | grep -q '://'; then
     echo "[Backup] R2 skipped: R2_BUCKET_NAME must be the bucket name only (e.g. abrigo-backup), not the S3 API URL. Use R2_ACCOUNT_ID for the endpoint."
   else
@@ -63,7 +63,11 @@ if [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2_ACCESS_KEY_ID}" ] && [ -n "${R2_SECRE
   unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
   fi
 else
-  echo "[Backup] R2 skipped (missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY or R2_BUCKET_NAME)"
+  if [ "${NODE_ENV:-}" != "production" ]; then
+    echo "[Backup] R2 skipped (NODE_ENV is not production; backup is local only)"
+  else
+    echo "[Backup] R2 skipped (missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY or R2_BUCKET_NAME)"
+  fi
 fi
 
 echo "[Backup] Cleaning old local backups (keeping latest only)"
