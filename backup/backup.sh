@@ -79,3 +79,15 @@ find "$BACKUP_DIR" -type f -name "backup_*.sql.gz" -mmin +2880 -delete 2>/dev/nu
 
 echo "[Backup] Cleanup done"
 echo "[Backup] Old backups cleaned"
+
+if [ -n "${POSTGRES_HOST}" ] && [ -n "${POSTGRES_DB}" ] && [ -n "${POSTGRES_USER}" ]; then
+  LAST_BACKUP_AT=$(date -Iseconds)
+  export PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}"
+  if psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -t -c \
+    "INSERT INTO system_config (key, value, created_at, updated_at) VALUES ('last_backup_at', '$LAST_BACKUP_AT', NOW(), NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();" 2>/dev/null; then
+    echo "[Backup] system_config last_backup_at updated: $LAST_BACKUP_AT"
+  else
+    echo "[Backup] Could not update system_config (table may not exist yet): non-fatal"
+  fi
+  unset PGPASSWORD
+fi
