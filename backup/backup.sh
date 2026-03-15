@@ -3,6 +3,7 @@ set -e
 
 BACKUP_DIR="/backups"
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+BACKUP_SQL="$BACKUP_DIR/backup_$TIMESTAMP.sql"
 BACKUP_FILE="$BACKUP_DIR/backup_$TIMESTAMP.sql.gz"
 
 echo "[Backup] Starting backup at $TIMESTAMP"
@@ -11,28 +12,25 @@ mkdir -p "$BACKUP_DIR"
 
 export PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}"
 
-pg_dump \
+TOTAL_ROWS=$(psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -v ON_ERROR_STOP=1 -c \
+  "ANALYZE; SELECT COALESCE(SUM(n_live_tup), 0)::bigint FROM pg_stat_user_tables WHERE schemaname = 'public';" 2>/dev/null | tail -1 || echo "0")
+if [ -z "$TOTAL_ROWS" ] || [ "${TOTAL_ROWS:-0}" -le 0 ]; then
+  echo "[Backup] Database appears empty (no rows in public tables), skipping backup"
+  unset PGPASSWORD
+  exit 0
+fi
+
+pg_dump -Fp --data-only  \
   -h "$POSTGRES_HOST" \
   -U "$POSTGRES_USER" \
   "$POSTGRES_DB" \
-  | gzip > "$BACKUP_FILE"
+  -f "$BACKUP_SQL"
+
+gzip -f "$BACKUP_SQL"
 
 unset PGPASSWORD
 
 echo "[Backup] Backup created: $BACKUP_FILE"
-
-FILE_TO_UPLOAD="$BACKUP_FILE"
-ENCRYPTED_FILE=""
-if [ -n "${BACKUP_ENCRYPTION_PASSWORD}" ]; then
-  ENCRYPTED_FILE="${BACKUP_FILE}.enc"
-  if openssl enc -aes-256-cbc -salt -pbkdf2 -in "$BACKUP_FILE" -out "$ENCRYPTED_FILE" -k "$BACKUP_ENCRYPTION_PASSWORD" 2>/dev/null; then
-    FILE_TO_UPLOAD="$ENCRYPTED_FILE"
-    echo "[Backup] Encrypted backup: $ENCRYPTED_FILE"
-  else
-    ENCRYPTED_FILE=""
-    echo "[Backup] Encryption failed (non-fatal), uploading plain backup"
-  fi
-fi
 
 if [ "${NODE_ENV:-}" = "production" ] && [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2_ACCESS_KEY_ID}" ] && [ -n "${R2_SECRET_ACCESS_KEY}" ] && [ -n "${R2_BUCKET_NAME}" ]; then
   if echo "$R2_BUCKET_NAME" | grep -q '://'; then
@@ -44,7 +42,7 @@ if [ "${NODE_ENV:-}" = "production" ] && [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2
   export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
   export AWS_DEFAULT_REGION="${R2_REGION:-auto}"
 
-  if aws s3 cp "$FILE_TO_UPLOAD" "s3://${R2_BUCKET_NAME}/backups/$(basename "$FILE_TO_UPLOAD")" --endpoint-url "$R2_ENDPOINT"; then
+  if aws s3 cp "$BACKUP_FILE" "s3://${R2_BUCKET_NAME}/backups/$(basename "$BACKUP_FILE")" --endpoint-url "$R2_ENDPOINT"; then
     echo "[Backup] R2 upload OK"
     R2_RETENTION_COUNT="${R2_RETENTION_COUNT:-168}"
     aws s3 ls "s3://${R2_BUCKET_NAME}/backups/" --endpoint-url "$R2_ENDPOINT" 2>/dev/null \
@@ -59,7 +57,6 @@ if [ "${NODE_ENV:-}" = "production" ] && [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2
   else
     echo "[Backup] R2 upload failed (non-fatal)"
   fi
-  [ -n "${ENCRYPTED_FILE}" ] && [ -f "${ENCRYPTED_FILE}" ] && rm -f "${ENCRYPTED_FILE}"
   unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
   fi
 else
@@ -81,13 +78,15 @@ echo "[Backup] Cleanup done"
 echo "[Backup] Old backups cleaned"
 
 if [ -n "${POSTGRES_HOST}" ] && [ -n "${POSTGRES_DB}" ] && [ -n "${POSTGRES_USER}" ]; then
-  LAST_BACKUP_AT=$(date -Iseconds)
   export PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}"
-  if psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -t -c \
-    "INSERT INTO system_config (key, value, created_at, updated_at) VALUES ('last_backup_at', '$LAST_BACKUP_AT', NOW(), NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();" 2>/dev/null; then
-    echo "[Backup] system_config last_backup_at updated: $LAST_BACKUP_AT"
-  else
-    echo "[Backup] Could not update system_config (table may not exist yet): non-fatal"
+  HAS_TABLE=$(psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -v ON_ERROR_STOP=1 -c \
+    "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'system_config';" 2>/dev/null || echo "")
+  if [ "$HAS_TABLE" = "1" ]; then
+    LAST_BACKUP_AT=$(date -Iseconds)
+    if psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -t -c \
+      "INSERT INTO system_config (key, value, created_at, updated_at) VALUES ('last_backup_at', '$LAST_BACKUP_AT', NOW(), NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();" 2>/dev/null; then
+      echo "[Backup] system_config last_backup_at updated: $LAST_BACKUP_AT"
+    fi
   fi
   unset PGPASSWORD
 fi

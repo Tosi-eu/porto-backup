@@ -182,17 +182,16 @@ services:
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       R2_BUCKET_NAME: ${R2_BUCKET_NAME:-}
       R2_RETENTION_COUNT: ${R2_RETENTION_COUNT:-168}
-      BACKUP_ENCRYPTION_PASSWORD: ${BACKUP_ENCRYPTION_PASSWORD:-}
     volumes:
-      - backups:/backups
+      - ./backups:/backups
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - abrigo
 
 volumes:
   postgres_data:
-  backups:
 
 networks:
   abrigo:
