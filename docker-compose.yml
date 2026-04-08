@@ -88,9 +88,10 @@ services:
       DB_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
-    volumes:
-      - ../backend:/app
-      - /app/node_modules
+    # Importante: não montar o código do host em /app aqui.
+    # O backend é compilado no build da imagem (dist/). Se montarmos `../backend:/app`,
+    # o bind mount sobrescreve o `dist/` do container com o `dist/` do host (que pode
+    # estar desatualizado ou com permissões erradas), causando 404 em rotas novas.
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,6 +128,11 @@ services:
         NEXT_PUBLIC_X_API_KEY: ${NEXT_PUBLIC_X_API_KEY:-}
     container_name: frontend
     restart: always
+    # Next standalone usa process.env.HOSTNAME para bind. O Docker injeta HOSTNAME com o ID do
+    # container e sobrescreve o ENV do Dockerfile — sem isto, nada escuta em 0.0.0.0 e o nginx dá 502.
+    environment:
+      HOSTNAME: "0.0.0.0"
+      PORT: "8081"
     logging:
       driver: json-file
       options:
