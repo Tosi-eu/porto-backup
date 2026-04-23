@@ -44,16 +44,6 @@ if [ "${NODE_ENV:-}" = "production" ] && [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2
 
   if aws s3 cp "$BACKUP_FILE" "s3://${R2_BUCKET_NAME}/backups/$(basename "$BACKUP_FILE")" --endpoint-url "$R2_ENDPOINT"; then
     echo "[Backup] R2 upload OK"
-    R2_RETENTION_COUNT="${R2_RETENTION_COUNT:-168}"
-    aws s3 ls "s3://${R2_BUCKET_NAME}/backups/" --endpoint-url "$R2_ENDPOINT" 2>/dev/null \
-      | sort -k1,2 -r \
-      | tail -n +$((R2_RETENTION_COUNT + 1)) \
-      | awk '{print $4}' \
-      | while read -r fname; do
-          [ -z "$fname" ] && continue
-          echo "[Backup] Deleting old R2 object: $fname"
-          aws s3 rm "s3://${R2_BUCKET_NAME}/backups/${fname}" --endpoint-url "$R2_ENDPOINT" 2>/dev/null || true
-        done
   else
     echo "[Backup] R2 upload failed (non-fatal)"
   fi
@@ -67,15 +57,7 @@ else
   fi
 fi
 
-echo "[Backup] Cleaning old local backups (keeping latest only)"
-
-ls -1t "$BACKUP_DIR"/backup_*.sql.gz 2>/dev/null \
-  | tail -n +2 \
-  | xargs -r rm -- 2>/dev/null || true
-find "$BACKUP_DIR" -type f -name "backup_*.sql.gz" -mmin +2880 -delete 2>/dev/null || true
-
-echo "[Backup] Cleanup done"
-echo "[Backup] Old backups cleaned"
+echo "[Backup] Retention/cleanup disabled (keeping backups indefinitely)"
 
 if [ -n "${POSTGRES_HOST}" ] && [ -n "${POSTGRES_DB}" ] && [ -n "${POSTGRES_USER}" ]; then
   export PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}"
