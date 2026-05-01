@@ -79,8 +79,11 @@ services:
       dockerfile: Dockerfile
     container_name: backend
     restart: always
+    # Carrega a raiz e o backend: variáveis como PRICING_API_* costumam estar só em
+    # backend/.env; sem o segundo ficheiro o serviço de preços fica desligado no container.
     env_file:
       - ../.env
+      - ../backend/.env
     environment:
       PORT: 3000
       NODE_ENV: ${NODE_ENV:-production}
@@ -88,10 +91,9 @@ services:
       DB_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
-    # Importante: não montar o código do host em /app aqui.
-    # O backend é compilado no build da imagem (dist/). Se montarmos `../backend:/app`,
-    # o bind mount sobrescreve o `dist/` do container com o `dist/` do host (que pode
-    # estar desatualizado ou com permissões erradas), causando 404 em rotas novas.
+      PRICING_API_URL: ${PRICING_API_URL:-http://price-search:3010}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,6 +117,38 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  price-search:
+    build:
+      context: ../stokio-api-price-search
+      dockerfile: Dockerfile
+    container_name: price-search
+    restart: always
+    env_file:
+      - ../.env
+      - ../backend/.env
+    environment:
+      PORT: 3010
+      NODE_ENV: ${NODE_ENV:-production}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:3000}
+      ENABLE_CRON: ${ENABLE_CRON:-true}
+      ENABLE_PRICE_BACKFILL_CRON: ${ENABLE_PRICE_BACKFILL_CRON:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - abrigo
+    expose:
+      - "3010"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   frontend:
     build:
       context: ../frontend
@@ -128,8 +162,6 @@ services:
         NEXT_PUBLIC_X_API_KEY: ${NEXT_PUBLIC_X_API_KEY:-}
     container_name: frontend
     restart: always
-    # Next standalone usa process.env.HOSTNAME para bind. O Docker injeta HOSTNAME com o ID do
-    # container e sobrescreve o ENV do Dockerfile — sem isto, nada escuta em 0.0.0.0 e o nginx dá 502.
     environment:
       HOSTNAME: "0.0.0.0"
       PORT: "8081"
@@ -141,12 +173,11 @@ services:
     networks:
       - abrigo
     expose:
-      # Alinhado ao frontend/Dockerfile (Next standalone em PORT=8081)
       - "8081"
     depends_on:
       - backend
+      - price-search
 
-  # Reverse proxy: single entry point, SSL termination, rate limiting
   proxy:
     image: nginx:alpine
     container_name: proxy
