@@ -211,8 +211,13 @@ services:
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: abrigo
       NOTIFICATION_BOOTSTRAP_CRON: ${NOTIFICATION_BOOTSTRAP_CRON:-*/30 * * * *}
+      # Sobrescreve backend/.env (localhost:5433 = host); na rede Docker usar o serviço postgres:5432
+      DB_HOST: postgres
+      DB_PORT: 5432
     entrypoint: ["node", "dist/temporal/schedules.js"]
     depends_on:
+      postgres:
+        condition: service_healthy
       temporal:
         condition: service_started
     networks:
