@@ -18,8 +18,8 @@ services:
       - abrigo_main_postgres_data:/var/lib/postgresql/data
     networks:
       - abrigo
-    # Do not publish to host by default to avoid port conflicts.
-    # Use `docker compose port postgres 5432` or add a port mapping if needed.
+    ports:
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
       interval: 10s
@@ -110,7 +110,8 @@ services:
       - temporal
     environment:
       TEMPORAL_ADDRESS: temporal:7233
-      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+      TEMPORAL_UI_PUBLIC_PATH: /temporal
+      TEMPORAL_CORS_ORIGINS: http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80,http://localhost:3000,http://localhost:8090,http://127.0.0.1:8090
     networks:
       - abrigo
     ports:
@@ -131,7 +132,6 @@ services:
       DB_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      PRICING_API_URL: ${PRICING_API_URL:-http://price-search:3010}
       ENABLE_CRON: "false"
       ENABLE_TEMPORAL: "true"
       TEMPORAL_ADDRESS: temporal:7233
@@ -180,7 +180,6 @@ services:
       DB_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      PRICING_API_URL: ${PRICING_API_URL:-http://price-search:3010}
       ENABLE_TEMPORAL: "true"
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
@@ -212,7 +211,6 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: abrigo
-      PRICE_BACKFILL_CRON: ${PRICE_BACKFILL_CRON:-15 */2 * * *}
       NOTIFICATION_BOOTSTRAP_CRON: ${NOTIFICATION_BOOTSTRAP_CRON:-*/30 * * * *}
     entrypoint: ["node", "dist/temporal/schedules.js"]
     depends_on:
@@ -232,11 +230,12 @@ services:
     environment:
       PORT: 3010
       NODE_ENV: ${NODE_ENV:-production}
+      DB_HOST: postgres
+      DB_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:3000}
       ENABLE_CRON: "false"
-      ENABLE_PRICE_BACKFILL_CRON: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -298,6 +297,7 @@ services:
     depends_on:
       - backend
       - frontend
+      - temporal-ui
     networks:
       - abrigo
 
