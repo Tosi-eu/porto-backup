@@ -46,7 +46,7 @@ services:
       "
     depends_on:
       postgres:
-        condition: service_started
+        condition: service_healthy
     networks:
       - abrigo
     restart: "no"
@@ -102,12 +102,23 @@ services:
       - abrigo
     ports:
       - "127.0.0.1:17233:7233"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "temporal operator cluster health --address 127.0.0.1:7233 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 90s
 
   temporal-ui:
     image: temporalio/ui:2.30.2
     restart: always
     depends_on:
-      - temporal
+      temporal:
+        condition: service_healthy
     environment:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: http://127.0.0.1:8090,http://localhost:8090
@@ -146,7 +157,7 @@ services:
       redis:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     networks:
       - abrigo
     expose:
@@ -190,7 +201,7 @@ services:
       redis:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     networks:
       - abrigo
     volumes:
@@ -219,7 +230,7 @@ services:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     networks:
       - abrigo
 
@@ -249,6 +260,16 @@ services:
       - abrigo
     expose:
       - "3010"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:3010/health | grep -q '\"status\":\"ok\"' || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 25s
     logging:
       driver: json-file
       options:
@@ -279,9 +300,17 @@ services:
       - abrigo
     expose:
       - "8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     depends_on:
-      - backend
-      - price-search
+      backend:
+        condition: service_healthy
+      price-search:
+        condition: service_healthy
 
   proxy:
     image: nginx:alpine
@@ -299,8 +328,16 @@ services:
       - ./proxy/nginx/conf.d:/etc/nginx/conf.d:ro
       - ./proxy/nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     networks:
       - abrigo
 
@@ -317,7 +354,10 @@ services:
     env_file:
       - ../.env
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      # Dedicated backup container: allow R2 when credentials exist (stack NODE_ENV may be development)
+      NODE_ENV: ${NODE_ENV:-production}
+      BACKUP_UPLOAD_R2: ${BACKUP_UPLOAD_R2:-1}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${DB_NAME:-estoque}
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -326,7 +366,11 @@ services:
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       R2_BUCKET_NAME: ${R2_BUCKET_NAME:-}
-      R2_RETENTION_COUNT: ${R2_RETENTION_COUNT:-168}
+      R2_REGION: ${R2_REGION:-auto}
+      R2_RETENTION_COUNT: ${R2_RETENTION_COUNT:-30}
+      # Alinhar com outros servicos (scripts que leem DB_* em vez de POSTGRES_*)
+      DB_HOST: postgres
+      DB_PORT: 5432
     volumes:
       - ./backups:/backups
     depends_on:

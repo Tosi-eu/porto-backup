@@ -32,7 +32,13 @@ unset PGPASSWORD
 
 echo "[Backup] Backup created: $BACKUP_FILE"
 
-if [ "${NODE_ENV:-}" = "production" ] && [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2_ACCESS_KEY_ID}" ] && [ -n "${R2_SECRET_ACCESS_KEY}" ] && [ -n "${R2_BUCKET_NAME}" ]; then
+# R2 upload: production, or explicit BACKUP_UPLOAD_R2=1 (dedicated backup container in compose)
+UPLOAD_R2=0
+if [ "${NODE_ENV:-}" = "production" ] || [ "${BACKUP_UPLOAD_R2:-0}" = "1" ]; then
+  UPLOAD_R2=1
+fi
+
+if [ "$UPLOAD_R2" = "1" ] && [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2_ACCESS_KEY_ID}" ] && [ -n "${R2_SECRET_ACCESS_KEY}" ] && [ -n "${R2_BUCKET_NAME}" ]; then
   if echo "$R2_BUCKET_NAME" | grep -q '://'; then
     echo "[Backup] R2 skipped: R2_BUCKET_NAME must be the bucket name only (e.g. abrigo-backup), not the S3 API URL. Use R2_ACCOUNT_ID for the endpoint."
   else
@@ -50,14 +56,26 @@ if [ "${NODE_ENV:-}" = "production" ] && [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2
   unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
   fi
 else
-  if [ "${NODE_ENV:-}" != "production" ]; then
-    echo "[Backup] R2 skipped (NODE_ENV is not production; backup is local only)"
+  if [ "$UPLOAD_R2" != "1" ]; then
+    echo "[Backup] R2 skipped (set NODE_ENV=production or BACKUP_UPLOAD_R2=1 with R2 credentials to upload)"
   else
     echo "[Backup] R2 skipped (missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY or R2_BUCKET_NAME)"
   fi
 fi
 
-echo "[Backup] Retention/cleanup disabled (keeping backups indefinitely)"
+# Local retention: keep newest N gzipped backups (R2_RETENTION_COUNT from compose, default 30)
+KEEP_LOCAL="${R2_RETENTION_COUNT:-30}"
+if [ "${KEEP_LOCAL}" -gt 0 ] 2>/dev/null; then
+  OLD=$(ls -1t "$BACKUP_DIR"/backup_*.sql.gz 2>/dev/null | tail -n +"$((KEEP_LOCAL + 1))" || true)
+  if [ -n "$OLD" ]; then
+    echo "$OLD" | while read -r f; do
+      [ -n "$f" ] && rm -f "$f" && echo "[Backup] Removed old local backup: $f"
+    done
+  fi
+  echo "[Backup] Local retention: keeping up to ${KEEP_LOCAL} newest backup_*.sql.gz"
+else
+  echo "[Backup] Local retention disabled (R2_RETENTION_COUNT<=0)"
+fi
 
 if [ -n "${POSTGRES_HOST}" ] && [ -n "${POSTGRES_DB}" ] && [ -n "${POSTGRES_USER}" ]; then
   export PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}"
